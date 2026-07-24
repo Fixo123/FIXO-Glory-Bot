@@ -7,10 +7,13 @@ import sqlite3
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict
-from models import Guild, Bot, GloryLog
+
+# ===== FIXED IMPORT — backend.models වලින් ගන්නවා =====
+from backend.models import Guild, Bot, GloryLog
 
 logger = logging.getLogger(__name__)
 
+# ===== DATABASE SCHEMA =====
 DB_SCHEMA = """
 CREATE TABLE IF NOT EXISTS guilds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -325,4 +328,4 @@ class DatabaseManager:
                 "total_glory": total_glory,
                 "bot_count": bot_count,
                 "total_runs": total_runs
-            }
+                }
