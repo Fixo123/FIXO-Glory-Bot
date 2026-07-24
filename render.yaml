@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: fixo-dev-glory-bot
+    runtime: python
+    repo: https://github.com/your-username/guild-glory-bot
+    plan: free
+    region: singapore
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python backend/main.py
+    envVars:
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 10000
+      - key: GAME_REGION
+        value: ASIA
+      - key: GLORY_INTERVAL_SECONDS
+        value: 300
+      - key: MAX_CONCURRENT_GUILDS
+        value: 10
+      - key: DB_PATH
+        value: guild_glory.db
+      - key: LOG_LEVEL
+        value: INFO
+      - key: FREE_FIRE_API_MODE
+        value: real
+      - key: FREE_FIRE_SECRET_KEY
+        value: your_secret_key_here
+      - key: BOT1_USERNAME
+        value: onethsara270@gmail.com
+      - key: BOT1_PASSWORD
+        value: oshan123#
+      - key: BOT1_GUILD
+        value: 3100366682
