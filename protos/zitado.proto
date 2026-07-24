@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package zitado;
+
+message LoginRequest {
+    string username = 1;
+    string password = 2;
+    string device_id = 3;
+    string device_type = 4;
+    string app_version = 5;
+}
+
+message GuildInfoRequest {
+    string guild_id = 1;
+}
+
+message GuildInfoResponse {
+    string guild_id = 1;
+    string guild_name = 2;
+    int32 member_count = 3;
+    int32 glory_points = 4;
+}
+
+message GloryFarmRequest {
+    string guild_id = 1;
+    string user_id = 2;
+    string action_type = 3;
+    string action_id = 4;
+    int64 timestamp = 5;
+}
+
+message GloryFarmResponse {
+    int32 glory = 1;
+    bool success = 2;
+}
