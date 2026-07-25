@@ -1,219 +1,160 @@
 """
-FIXO DEV — FreeFire Real API Integration
+FIXO DEV — Multiple Bot Account Manager
 """
 
-# ===== PATH SETUP — Protos එක හොයාගන්න =====
+# ===== PATH SETUP =====
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# ===== IMPORTS =====
 import asyncio
-import aiohttp
-import hashlib
-import time
-import random
 import logging
-from typing import Optional, Dict
+from typing import Dict, List, Optional
+from dataclasses import dataclass, field
 
-from protos import jwt_generator_pb2
-from config import config
+# ===== FIXED IMPORTS — backend. වලින් ගන්නවා =====
+from backend.freefire_api import FreeFireAPI
+from backend.config import config
 
 logger = logging.getLogger(__name__)
 
-class FreeFireAPI:
-    """FreeFire API Client"""
+@dataclass
+class BotAccount:
+    name: str
+    username: str
+    password: str
+    guild_uid: str = ""
+    status: str = "idle"
+    last_run: float = 0
+    glory_today: int = 0
+    total_glory: int = 0
+    api: Optional[FreeFireAPI] = None
+    assigned_guilds: List[str] = field(default_factory=list)
 
-    def __init__(self, config):
-        self.config = config
-        self.base_url = "https://api.freefire.com/v1"
-        self.auth_token = None
-        self.refresh_token = None
-        self.user_id = None
-        self.device_id = None
-        self.jwt_generator = None
-        self._connected = False
-        self._generate_device_id()
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "username": self.username,
+            "guild_uid": self.guild_uid,
+            "status": self.status,
+            "glory_today": self.glory_today,
+            "total_glory": self.total_glory,
+            "assigned_guilds": self.assigned_guilds
+        }
 
-    def _generate_device_id(self):
-        import uuid
-        self.device_id = str(uuid.uuid4())
+class BotAccountManager:
+    def __init__(self):
+        self.bots: Dict[str, BotAccount] = {}
+        self._load_bots_from_config()
+        self.running = False
+        self.lock = asyncio.Lock()
 
-    def _generate_jwt(self, payload: Dict) -> str:
-        if not self.jwt_generator:
-            self.jwt_generator = jwt_generator_pb2.JWTGenerator(
-                self.config.FREE_FIRE_SECRET_KEY
+    def _load_bots_from_config(self):
+        import os
+        bot_index = 1
+        while True:
+            username = os.getenv(f"BOT{bot_index}_USERNAME")
+            password = os.getenv(f"BOT{bot_index}_PASSWORD")
+            guild_uid = os.getenv(f"BOT{bot_index}_GUILD", "")
+            
+            if not username or not password:
+                break
+                
+            bot_name = f"Bot_{bot_index}"
+            self.bots[bot_name] = BotAccount(
+                name=bot_name,
+                username=username,
+                password=password,
+                guild_uid=guild_uid,
+                status="idle"
             )
-        return self.jwt_generator.generate(payload)
+            logger.info(f"✅ Loaded bot: {bot_name}")
+            bot_index += 1
 
-    async def login(self, username: str, password: str) -> bool:
-        try:
-            jwt_token = self._generate_jwt({
-                "username": username,
-                "device_id": self.device_id
-            })
+    def get_bot(self, bot_name: str) -> Optional[BotAccount]:
+        return self.bots.get(bot_name)
 
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {jwt_token}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "FreeFire/1.105.0 (Android)",
-                    "X-Device-ID": self.device_id
-                }
+    def get_all_bots(self) -> List[BotAccount]:
+        return list(self.bots.values())
 
-                payload = {
-                    "username": username,
-                    "password": hashlib.md5(password.encode()).hexdigest(),
-                    "device_id": self.device_id,
-                    "device_type": "Android",
-                    "app_version": "1.105.0"
-                }
+    def get_active_bots(self) -> List[BotAccount]:
+        return [bot for bot in self.bots.values() if bot.status == "active"]
 
-                async with session.post(
-                    f"{self.base_url}/auth/login",
-                    headers=headers,
-                    json=payload
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        self.auth_token = data.get("access_token")
-                        self.refresh_token = data.get("refresh_token")
-                        self.user_id = data.get("user_id")
-                        self._connected = True
-                        logger.info(f"✅ FreeFire login successful: {self.user_id}")
-                        return True
-                    else:
-                        logger.error(f"Login failed: {resp.status}")
-                        return False
-        except Exception as e:
-            logger.error(f"Login error: {e}")
+    def get_idle_bots(self) -> List[BotAccount]:
+        return [bot for bot in self.bots.values() if bot.status == "idle"]
+
+    async def initialize_bot(self, bot_name: str) -> bool:
+        bot = self.bots.get(bot_name)
+        if not bot:
             return False
 
-    async def refresh_auth(self) -> bool:
         try:
-            if not self.refresh_token:
+            bot.api = FreeFireAPI(config)
+            success = await bot.api.login(bot.username, bot.password)
+            if success:
+                bot.status = "active"
+                return True
+            else:
+                bot.status = "error"
                 return False
-
-            async with aiohttp.ClientSession() as session:
-                headers = {"X-Device-ID": self.device_id}
-                payload = {"refresh_token": self.refresh_token}
-
-                async with session.post(
-                    f"{self.base_url}/auth/refresh",
-                    headers=headers,
-                    json=payload
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        self.auth_token = data.get("access_token")
-                        self.refresh_token = data.get("refresh_token")
-                        return True
-                    return False
         except Exception as e:
-            logger.error(f"Refresh error: {e}")
+            logger.error(f"Bot init error: {e}")
+            bot.status = "error"
             return False
 
-    async def farm_glory(self, guild_uid: str, mode: str = "normal") -> Dict:
+    async def farm_for_guild(self, bot_name: str, guild_uid: str) -> dict:
+        bot = self.bots.get(bot_name)
+        if not bot:
+            return {"success": False, "error": "Bot not found"}
+
+        if not bot.api or not bot.api.is_connected():
+            await self.initialize_bot(bot_name)
+
         try:
-            if not self.auth_token:
-                await self.refresh_auth()
-
-            strategies = {
-                "normal": {"actions": 5, "delay": 2.0},
-                "intense": {"actions": 10, "delay": 1.0},
-                "turbo": {"actions": 20, "delay": 0.5}
-            }
-            strategy = strategies.get(mode, strategies["normal"])
-            total_glory = 0
-
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-                "X-Device-ID": self.device_id,
-                "X-User-ID": self.user_id
-            }
-
-            async with aiohttp.ClientSession() as session:
-                for i in range(strategy["actions"]):
-                    payload = {
-                        "guild_id": guild_uid,
-                        "user_id": self.user_id,
-                        "action_type": "collect_glory",
-                        "action_id": f"action_{int(time.time())}_{i}",
-                        "timestamp": int(time.time())
-                    }
-
-                    async with session.post(
-                        f"{self.base_url}/guild/{guild_uid}/glory",
-                        headers=headers,
-                        json=payload
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            glory_gained = data.get("glory", random.randint(10, 50))
-                            total_glory += glory_gained
-                        elif resp.status == 401:
-                            await self.refresh_auth()
-                            headers["Authorization"] = f"Bearer {self.auth_token}"
-
-                    await asyncio.sleep(strategy["delay"])
-
-            return {"success": total_glory > 0, "glory": total_glory, "actions": strategy["actions"]}
-
+            result = await bot.api.farm_glory(guild_uid, mode="intense")
+            if result["success"]:
+                bot.glory_today += result["glory"]
+                bot.total_glory += result["glory"]
+                bot.last_run = asyncio.get_event_loop().time()
+            return result
         except Exception as e:
-            logger.error(f"Farm glory error: {e}")
-            return {"success": False, "glory": 0, "error": str(e)}
+            return {"success": False, "error": str(e)}
 
-    async def get_guild_info(self, guild_uid: str) -> Optional[Dict]:
-        try:
-            if not self.auth_token:
-                await self.refresh_auth()
+    async def assign_guild_to_bot(self, bot_name: str, guild_uid: str) -> bool:
+        bot = self.bots.get(bot_name)
+        if not bot:
+            return False
 
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-                "X-Device-ID": self.device_id
-            }
+        if guild_uid not in bot.assigned_guilds:
+            bot.assigned_guilds.append(guild_uid)
+            if bot.api and bot.api.is_connected():
+                await bot.api.join_guild(guild_uid)
+            return True
+        return False
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.base_url}/guild/{guild_uid}/info",
-                    headers=headers
-                ) as resp:
-                    if resp.status == 200:
-                        return await resp.json()
-                    return None
-        except Exception as e:
-            logger.error(f"Guild info error: {e}")
+    async def assign_guild_to_best_bot(self, guild_uid: str) -> Optional[str]:
+        available_bots = [bot for bot in self.bots.values() if bot.status == "active"]
+        if not available_bots:
             return None
 
-    async def join_guild(self, guild_uid: str) -> bool:
-        try:
-            if not self.auth_token:
-                await self.refresh_auth()
+        available_bots.sort(key=lambda b: len(b.assigned_guilds))
+        best_bot = available_bots[0]
+        await self.assign_guild_to_bot(best_bot.name, guild_uid)
+        return best_bot.name
 
-            headers = {
-                "Authorization": f"Bearer {self.auth_token}",
-                "X-Device-ID": self.device_id
-            }
+    async def stop_all_bots(self):
+        self.running = False
+        for bot in self.bots.values():
+            bot.status = "idle"
 
-            payload = {
-                "guild_id": guild_uid,
-                "user_id": self.user_id,
-                "join_type": "normal"
-            }
-
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/guild/{guild_uid}/join",
-                    headers=headers,
-                    json=payload
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data.get("success", False)
-                    return False
-        except Exception as e:
-            logger.error(f"Join guild error: {e}")
-            return False
-
-    def is_connected(self) -> bool:
-        return self._connected and self.auth_token is not None
+    def get_stats(self) -> dict:
+        total_glory = sum(bot.total_glory for bot in self.bots.values())
+        total_guilds = sum(len(bot.assigned_guilds) for bot in self.bots.values())
+        
+        return {
+            "total_bots": len(self.bots),
+            "active_bots": len(self.get_active_bots()),
+            "total_glory": total_glory,
+            "total_guilds": total_guilds,
+            "bots": [bot.to_dict() for bot in self.bots.values()]
+        }
