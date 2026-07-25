@@ -11,10 +11,11 @@ import asyncio
 import logging
 from typing import Optional
 
-from models import Guild
-from database import DatabaseManager
-from bot_manager import BotAccountManager
-from config import config
+# ===== FIXED IMPORTS — backend. වලින් ගන්නවා =====
+from backend.models import Guild
+from backend.database import DatabaseManager
+from backend.bot_manager import BotAccountManager
+from backend.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -156,4 +157,4 @@ class GloryFarmingEngine:
                 "active_tasks": len(self.active_tasks),
                 "results_pending": self.results_queue.qsize(),
                 "bots": self.bot_manager.get_stats()
-            }
+    }
